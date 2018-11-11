@@ -1,0 +1,35 @@
+This code aims to compare the x86-64 disassembling speed of Intel XED
+(https://intelxed.github.io/) and Capstone (http://www.capstone-engine.org/).
+parse_elf.py takes ELF binary file as input and generates x86-64 instructions.
+measure_disasm.c measures on average how many CPU cycles are taken to
+disassemble each instruction.
+
+Compile code
+------------
+* Follow the steps in https://intelxed.github.io/build-manual/ to
+  build and install Intel XED. Make sure headers and static libraries are
+  installed in path where GCC can find.
+* Install Capstone. In Ubuntu, run "sudo apt-get install libcapstone-dev".
+* Install The GNU Multiple Precision Arithmetic Library. In Ubuntu, run "sudo
+  apt-get install libgmp3-dev".
+* Run "make".
+
+Run test
+--------
+./parse_elf.py <elf_file> | ./measure_disasm <options>
+
+<elf_file> is the ELF executable's file path, e.g., /bin/ls.
+
+<options> can be one of the following three options:
+
+1) --capstone
+This option chooses Capstone to disassemble the x86-64 instructions.
+
+2) --capstone --detail
+This option chooses Capstone to disassemble the x86-64 instructions, and get
+more details for the disassembled instruction, e.g., implicit register
+read/write.
+
+3) --xed
+This option chooses XED to disassemble the x86-64 instructions. XED always
+gives detailed disassembling information.
