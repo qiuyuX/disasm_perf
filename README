@@ -1,8 +1,8 @@
 This code aims to compare the x86-64 disassembling speed of Intel XED
 (https://intelxed.github.io/) and Capstone (http://www.capstone-engine.org/).
 parse_elf.py takes ELF binary file as input and generates x86-64 instructions.
-measure_disasm.c measures how many CPU cycles are taken to
-disassemble each instruction on average.
+measure_disasm.c measures on average how many CPU cycles are taken to
+disassemble each instruction.
 
 Compile code
 ------------

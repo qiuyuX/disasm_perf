@@ -143,8 +143,8 @@ void do_xed()
 
 void do_capstone()
 {
-	csh handle;
-	cs_insn* insn;
+    csh handle;
+    cs_insn* insn;
     char inst_ascii[32]; // ASCII representation of the instruction
     uint8_t inst_hex[15]; // HEX value of the instruction
     int len; // ASCII string length
