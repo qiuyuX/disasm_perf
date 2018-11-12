@@ -10,11 +10,12 @@ if __name__ == "__main__":
         print "Please specify executable file path."
         sys.exit(1)
 
-    proc = subprocess.Popen(['file', sys.argv[1]], stdout=subprocess.PIPE)
+    proc = subprocess.Popen(['objdump', '-f', sys.argv[1]], \
+                            stdout=subprocess.PIPE)
     stdout, stderr = proc.communicate()
 
     # Make sure the file type is x86-64 ELF
-    m = re.match('.*ELF 64-bit LSB .*, x86-64.*', stdout)
+    m = re.search('.*file format elf64\-x86\-64.*', stdout)
     if not m:
         print "Not an x86-64 ELF executable file."
         sys.exit(1)
