@@ -8,14 +8,16 @@ import subprocess
 if __name__ == "__main__":
     if len(sys.argv) != 2:
         print "Please specify executable file path."
+        sys.exit(1)
 
     proc = subprocess.Popen(['file', sys.argv[1]], stdout=subprocess.PIPE)
     stdout, stderr = proc.communicate()
 
     # Make sure the file type is x86-64 ELF
-    m = re.match('.*ELF 64-bit LSB executable, x86-64.*', stdout)
+    m = re.match('.*ELF 64-bit LSB .*, x86-64.*', stdout)
     if not m:
         print "Not an x86-64 ELF executable file."
+        sys.exit(1)
 
     proc = subprocess.Popen(['objdump', '-d', '--insn-width=16', \
                             sys.argv[1]], stdout=subprocess.PIPE)
