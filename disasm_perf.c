@@ -20,12 +20,14 @@ int is_xed = 0; // True if use xed
 int is_capstone = 0; // True if use capstone
 int is_zydis = 0; // True if use zydis
 int detailed_mode = 0; // Flag set by --detail, used by capstone
+int verbose_mode = 0; // Print per-instruction decoding time
 struct option options[] =
 {
     {"xed", no_argument, NULL, 'x'},
     {"capstone", no_argument, NULL, 'c'},
     {"zydis", no_argument, NULL, 'z'},
     {"detail", no_argument, NULL, 'd'},
+    {"verbose", no_argument, NULL, 'v'},
     {0, 0, 0, 0}
 };
 
@@ -133,14 +135,21 @@ void do_xed()
                      :
                      : "rdx");
 
-        // Add up disassembling time
-        mpz_add_ui(sum, sum, t2 - t1);
-        mpz_add_ui(count, count, 1);
-
         if (xed_error != XED_ERROR_NONE) {
             perror("XED error.\n");
             exit(1);
         }
+
+        if (verbose_mode) {
+            char buf[1000];
+            xed_format_context(XED_SYNTAX_ATT, &xedd, buf, 1000, 0, 0, 0);
+            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            printf("%s\n", buf);
+        }
+
+        // Add up disassembling time
+        mpz_add_ui(sum, sum, t2 - t1);
+        mpz_add_ui(count, count, 1);
     }
 }
 
@@ -214,14 +223,20 @@ void do_capstone()
                      :
                      : "rdx");
 
-        // Add up disassembling time
-        mpz_add_ui(sum, sum, t2 - t1);
-        mpz_add_ui(count, count, 1);
-
         if (!success) {
             perror("Capstone disasm error.\n");
             exit(1);
         }
+
+        if (verbose_mode) {
+            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            printf("0x%"PRIx64":\t%s\t\t%s\n", insn->address,
+                   insn->mnemonic, insn->op_str);
+        }
+
+        // Add up disassembling time
+        mpz_add_ui(sum, sum, t2 - t1);
+        mpz_add_ui(count, count, 1);
     }
 
     cs_free(insn, 1);
@@ -237,11 +252,15 @@ void do_zydis()
     uint64_t t1, t2;
 
     ZydisDecoder decoder;
+    ZydisFormatter formatter;
     ZydisDecodedInstruction instruction;
     ZydisStatus status;
     uint64_t address = 0;
     ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64,
                      ZYDIS_ADDRESS_WIDTH_64);
+
+    if (verbose_mode)
+        ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
 
     while (1) {
         char* ret;
@@ -290,6 +309,14 @@ void do_zydis()
             exit(1);
         }
 
+        if (verbose_mode) {
+            char buffer[256];
+            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            ZydisFormatterFormatInstruction(
+                &formatter, &instruction, buffer, sizeof(buffer));
+            puts(buffer);
+        }
+
         // Add up disassembling time
         mpz_add_ui(sum, sum, t2 - t1);
         mpz_add_ui(count, count, 1);
@@ -314,7 +341,8 @@ int main(int argc, char** argv)
     mpz_init(sum);
     mpz_init(count);
 
-    while ((o = getopt_long(argc, argv, "xcd", options, &option_index)) != -1) {
+    while ((o = getopt_long(argc, argv, "xczdv", options,
+                            &option_index)) != -1) {
         switch (o) {
             case 'x':
                 is_xed = 1;
@@ -327,6 +355,9 @@ int main(int argc, char** argv)
                 break;
             case 'd':
                 detailed_mode = 1; // Only matters for capstone
+                break;
+            case 'v':
+                verbose_mode = 1;
                 break;
             default:
                 perror("Not a valid option.\n");
