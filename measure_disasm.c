@@ -11,17 +11,20 @@
 #include <getopt.h>
 #include <gmp.h>
 #include <capstone/capstone.h>
+#include <Zydis/Zydis.h>
 #include "xed/xed-interface.h"
 
 mpz_t sum; // Total CPU cycles on disassembling
 mpz_t count; // The number of instructions being disassembled
 int is_xed = 0; // True if use xed
 int is_capstone = 0; // True if use capstone
+int is_zydis = 0; // True if use zydis
 int detailed_mode = 0; // Flag set by --detail, used by capstone
 struct option options[] =
 {
     {"xed", no_argument, NULL, 'x'},
     {"capstone", no_argument, NULL, 'c'},
+    {"zydis", no_argument, NULL, 'z'},
     {"detail", no_argument, NULL, 'd'},
     {0, 0, 0, 0}
 };
@@ -225,6 +228,74 @@ void do_capstone()
 	cs_close(&handle);
 }
 
+void do_zydis()
+{
+    char inst_ascii[32]; // ASCII representation of the instruction
+    uint8_t inst_hex[15]; // HEX value of the instruction
+    int len; // ASCII string length
+    size_t size;
+    uint64_t t1, t2;
+
+    ZydisDecoder decoder;
+    ZydisDecodedInstruction instruction;
+    ZydisStatus status;
+    uint64_t address = 0;
+    ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64,
+                     ZYDIS_ADDRESS_WIDTH_64);
+
+    while (1) {
+        char* ret;
+
+        ret = fgets(inst_ascii, 32, stdin);
+        if (!ret) {
+            if (ferror(stdin)) {
+                perror("Read error from stdin.\n");
+                exit(1);
+            } else { // EOF
+                break;
+            }
+        }
+
+        len = strlen(inst_ascii);
+        // Array should end with \n\0
+        if (inst_ascii[len - 1] != '\n') {
+            perror("Invalid ascii array encoding.\n");
+            exit(1);
+        }
+        asciis_to_hex_arr(inst_ascii, inst_hex, len - 1);
+        size = (len - 1) / 2;
+
+        // Measure disassembling time
+        asm volatile(
+                     "rdtsc\n\t"
+                     "shl $32, %%rdx\n\t"
+                     "or %%rdx, %0"
+                     : "=a" (t1)
+                     :
+                     : "rdx");
+
+        status = ZydisDecoderDecodeBuffer(&decoder, inst_hex, size,
+                                          address, &instruction);
+
+        asm volatile(
+                     "rdtsc\n\t"
+                     "shl $32, %%rdx\n\t"
+                     "or %%rdx, %0"
+                     : "=a" (t2)
+                     :
+                     : "rdx");
+
+        if (!ZYDIS_SUCCESS(status)) {
+            perror("Zydis disam error.\n");
+            exit(1);
+        }
+
+        // Add up disassembling time
+        mpz_add_ui(sum, sum, t2 - t1);
+        mpz_add_ui(count, count, 1);
+    }
+}
+
 int main(int argc, char** argv)
 {
     int o;
@@ -251,8 +322,11 @@ int main(int argc, char** argv)
             case 'c':
                 is_capstone = 1;
                 break;
+            case 'z':
+                is_zydis = 1;
+                break;
             case 'd':
-                detailed_mode = 1;
+                detailed_mode = 1; // Only matters for capstone
                 break;
             default:
                 perror("Not a valid option.\n");
@@ -260,13 +334,15 @@ int main(int argc, char** argv)
         }
     }
 
-    if ((is_xed && is_capstone) || (!is_xed && !is_capstone)) {
-        perror("Please choose either capstone or xed decoding.\n");
+    if (is_xed + is_capstone + is_zydis != 1) {
+        perror("Please choose xed, capstone, or zydis for decoding.\n");
         exit(1);
     } else if (is_xed) {
         do_xed();
     } else if (is_capstone) {
         do_capstone();
+    } else if (is_zydis) {
+        do_zydis();
     }
 
     if (mpz_cmp_ui(count, 0) == 0) {
