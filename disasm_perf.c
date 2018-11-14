@@ -72,15 +72,51 @@ void asciis_to_hex_arr(char* ascii, uint8_t* hex, int len)
         hex[i / 2] = asciis_to_hex_byte(ascii[i], ascii[i + 1]);
 }
 
+/*
+ * Read a single instruction from standard input.
+ * @buf stroes the hex value of the instruction.
+ * The return value is the instruction size.
+*/
+size_t read_inst(uint8_t* inst)
+{
+    char inst_ascii[32]; // ASCII representation of the instruction
+    size_t len; // ASCII string length
+    char* ret;
+
+    if (!inst)
+        return 0;
+
+    ret = fgets(inst_ascii, 32, stdin);
+    if (!ret) {
+        if (ferror(stdin)) {
+            printf("Read error from stdin.\n");
+            exit(1);
+        } else {// EOF
+            return 0;
+        }
+    }
+
+    len = strlen(inst_ascii);
+    // Array should end with \n\0
+    if (inst_ascii[len - 1] != '\n') {
+        perror("Invalid ascii array encoding.\n");
+        exit(1);
+    }
+
+    asciis_to_hex_arr(inst_ascii, inst, len - 1);
+
+    return (len - 1) / 2;
+}
+
 // Use Intel XED to decode instruction
 void do_xed()
 {
     xed_state_t state;
     xed_decoded_inst_t xedd;
-    char inst_ascii[32]; // ASCII representation of the instruction
-    uint8_t inst_hex[15]; // HEX value of the instruction
-    int len; // ASCII string length
-    uint64_t t1, t2;
+    xed_error_enum_t xed_error;
+    uint8_t inst[15]; // Instruction value
+    size_t len; // Instruction length
+    uint64_t t1, t2; // Timestamp
 
     // Initialize xed
     xed_tables_init();
@@ -89,27 +125,9 @@ void do_xed()
     state.stack_addr_width = XED_ADDRESS_WIDTH_64b;
 
     while (1) {
-        char* ret;
-        xed_error_enum_t xed_error;
-
-        ret = fgets(inst_ascii, 32, stdin);
-        if (!ret) {
-            if (ferror(stdin)) {
-                printf("Read error from stdin.\n");
-                exit(1);
-            } else {// EOF
-                break;
-            }
-        }
-
-        len = strlen(inst_ascii);
-        // Array should end with \n\0
-        if (inst_ascii[len - 1] != '\n') {
-            perror("Invalid ascii array encoding.\n");
-            exit(1);
-        }
-
-        asciis_to_hex_arr(inst_ascii, inst_hex, len - 1);
+        len = read_inst(inst);
+        if (len == 0)
+            break;
 
         // Measure disassembling time
         asm volatile(
@@ -124,8 +142,8 @@ void do_xed()
         // results
         xed_decoded_inst_zero_set_mode(&xedd, &state);
         xed_error = xed_decode(&xedd,
-                            XED_REINTERPRET_CAST(const xed_uint8_t*, inst_hex),
-                            (len - 1) / 2);
+                            XED_REINTERPRET_CAST(const xed_uint8_t*, inst),
+                            len);
 
         asm volatile(
                      "rdtsc\n\t"
@@ -143,7 +161,8 @@ void do_xed()
         if (verbose_mode) {
             char buf[1000];
             xed_format_context(XED_SYNTAX_ATT, &xedd, buf, 1000, 0, 0, 0);
-            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            printf("Decoding time (cycles): %llu.\n",
+                           (unsigned long long)(t2 - t1));
             printf("%s\n", buf);
         }
 
@@ -157,13 +176,12 @@ void do_capstone()
 {
     csh handle;
     cs_insn* insn;
-    char inst_ascii[32]; // ASCII representation of the instruction
-    uint8_t inst_hex[15]; // HEX value of the instruction
-    int len; // ASCII string length
-    size_t size;
+    uint8_t inst[15]; // HEX value of the instruction
+    size_t len; // ASCII string length
+    uint64_t t1, t2;
+    bool success;
     uint8_t* code;
     uint64_t address = 0;
-    uint64_t t1, t2;
 
     // Initialize capstone
 	if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle)) {
@@ -180,28 +198,11 @@ void do_capstone()
     insn = cs_malloc(handle);
 
     while (1) {
-        char* ret;
-        bool success;
+        len = read_inst(inst);
+        if (len == 0)
+            break;
 
-        ret = fgets(inst_ascii, 32, stdin);
-        if (!ret) {
-            if (ferror(stdin)) {
-                perror("Read error from stdin.\n");
-                exit(1);
-            } else { // EOF
-                break;
-            }
-        }
-
-        len = strlen(inst_ascii);
-        // Array should end with \n\0
-        if (inst_ascii[len - 1] != '\n') {
-            perror("Invalid ascii array encoding.\n");
-            exit(1);
-        }
-        asciis_to_hex_arr(inst_ascii, inst_hex, len - 1);
-        code = inst_hex;
-        size = (len - 1) / 2;
+        code = inst;
 
         // Measure disassembling time
         asm volatile(
@@ -213,7 +214,7 @@ void do_capstone()
                      : "rdx");
 
         success = cs_disasm_iter(handle, (const uint8_t**)&code,
-                                 &size, &address, insn);
+                                 &len, &address, insn);
 
         asm volatile(
                      "rdtsc\n\t"
@@ -229,7 +230,8 @@ void do_capstone()
         }
 
         if (verbose_mode) {
-            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            printf("Decoding time (cycles): %llu.\n",
+                           (unsigned long long)(t2 - t1));
             printf("0x%"PRIx64":\t%s\t\t%s\n", insn->address,
                    insn->mnemonic, insn->op_str);
         }
@@ -245,17 +247,15 @@ void do_capstone()
 
 void do_zydis()
 {
-    char inst_ascii[32]; // ASCII representation of the instruction
-    uint8_t inst_hex[15]; // HEX value of the instruction
-    int len; // ASCII string length
-    size_t size;
-    uint64_t t1, t2;
-
+    ZydisStatus status;
     ZydisDecoder decoder;
     ZydisFormatter formatter;
     ZydisDecodedInstruction instruction;
-    ZydisStatus status;
+    uint8_t inst[15]; // HEX value of the instruction
+    size_t len; // ASCII string length
+    uint64_t t1, t2;
     uint64_t address = 0;
+
     ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64,
                      ZYDIS_ADDRESS_WIDTH_64);
 
@@ -263,26 +263,9 @@ void do_zydis()
         ZydisFormatterInit(&formatter, ZYDIS_FORMATTER_STYLE_INTEL);
 
     while (1) {
-        char* ret;
-
-        ret = fgets(inst_ascii, 32, stdin);
-        if (!ret) {
-            if (ferror(stdin)) {
-                perror("Read error from stdin.\n");
-                exit(1);
-            } else { // EOF
-                break;
-            }
-        }
-
-        len = strlen(inst_ascii);
-        // Array should end with \n\0
-        if (inst_ascii[len - 1] != '\n') {
-            perror("Invalid ascii array encoding.\n");
-            exit(1);
-        }
-        asciis_to_hex_arr(inst_ascii, inst_hex, len - 1);
-        size = (len - 1) / 2;
+        len = read_inst(inst);
+        if (len == 0)
+            break;
 
         // Measure disassembling time
         asm volatile(
@@ -293,7 +276,7 @@ void do_zydis()
                      :
                      : "rdx");
 
-        status = ZydisDecoderDecodeBuffer(&decoder, inst_hex, size,
+        status = ZydisDecoderDecodeBuffer(&decoder, inst, len,
                                           address, &instruction);
 
         asm volatile(
@@ -310,11 +293,12 @@ void do_zydis()
         }
 
         if (verbose_mode) {
-            char buffer[256];
-            printf("Decoding time (cycles): %llu.\n", t2 - t1);
+            char buf[256];
+            printf("Decoding time (cycles): %llu.\n",
+                           (unsigned long long)(t2 - t1));
             ZydisFormatterFormatInstruction(
-                &formatter, &instruction, buffer, sizeof(buffer));
-            puts(buffer);
+                &formatter, &instruction, buf, sizeof(buf));
+            puts(buf);
         }
 
         // Add up disassembling time
@@ -326,7 +310,7 @@ void do_zydis()
 int main(int argc, char** argv)
 {
     int o;
-    int option_index;
+    int index;
     cpu_set_t mask;
 
     // Set process to a fixed CPU so that migration dosen't mess up rdtsc
@@ -341,8 +325,7 @@ int main(int argc, char** argv)
     mpz_init(sum);
     mpz_init(count);
 
-    while ((o = getopt_long(argc, argv, "xczdv", options,
-                            &option_index)) != -1) {
+    while ((o = getopt_long(argc, argv, "xczdv", options, &index)) != -1) {
         switch (o) {
             case 'x':
                 is_xed = 1;
